@@ -292,7 +292,19 @@ static int prefix_ref_iterator_advance(struct ref_iterator *ref_iterator)
 		if (!starts_with(iter->iter0->refname, iter->prefix))
 			continue;
 
-		iter->base.refname = iter->iter0->refname + iter->trim;
+		if (iter->trim) {
+			/*
+			 * If there wouldn't be at least one character
+			 * left in the refname after trimming, skip
+			 * over it:
+			 */
+			if (memchr(iter->iter0->refname, '\0', iter->trim + 1))
+				continue;
+			iter->base.refname = iter->iter0->refname + iter->trim;
+		} else {
+			iter->base.refname = iter->iter0->refname;
+		}
+
 		iter->base.oid = iter->iter0->oid;
 		iter->base.flags = iter->iter0->flags;
 		return ITER_OK;
