@@ -304,7 +304,7 @@ static struct packed_ref_cache *read_packed_refs(const char *packed_refs_file)
 				hashclr(sha1);
 				flag |= REF_BAD_NAME | REF_ISBROKEN;
 			}
-			last = create_ref_entry(refname, sha1, flag, 0);
+			last = create_ref_entry(refname, sha1, flag);
 			if (peeled == PEELED_FULLY ||
 			    (peeled == PEELED_TAGS && starts_with(refname, "refs/tags/")))
 				last->flag |= REF_KNOWS_PEELED;
@@ -428,8 +428,12 @@ static void add_packed_ref(struct files_ref_store *refs,
 
 	if (!is_lock_file_locked(&refs->packlock))
 		die("internal error: packed refs not locked");
+
+	if (check_refname_format(refname, REFNAME_ALLOW_ONELEVEL))
+		die("Reference has invalid format: '%s'", refname);
+
 	add_ref_entry(get_packed_ref_dir(packed_ref_cache),
-		      create_ref_entry(refname, sha1, REF_ISPACKED, 1));
+		      create_ref_entry(refname, sha1, REF_ISPACKED));
 }
 
 /*
@@ -506,7 +510,7 @@ static void loose_fill_ref_dir(struct ref_store *ref_store,
 				flag |= REF_BAD_NAME | REF_ISBROKEN;
 			}
 			add_entry_to_dir(dir,
-					 create_ref_entry(refname.buf, sha1, flag, 0));
+					 create_ref_entry(refname.buf, sha1, flag));
 		}
 		strbuf_setlen(&refname, dirnamelen);
 		strbuf_setlen(&path, path_baselen);
@@ -1554,7 +1558,7 @@ static int files_pack_refs(struct ref_store *ref_store, unsigned int flags)
 			oidcpy(&packed_entry->u.value.oid, iter->oid);
 		} else {
 			packed_entry = create_ref_entry(iter->refname, iter->oid->hash,
-							REF_ISPACKED, 0);
+							REF_ISPACKED);
 			add_ref_entry(packed_refs, packed_entry);
 		}
 		oidclr(&packed_entry->u.value.peeled);
