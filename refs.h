@@ -534,7 +534,10 @@ int ref_transaction_verify(struct ref_transaction *transaction,
 
 /*
  * Commit all of the changes that have been queued in transaction, as
- * atomically as possible.
+ * atomically as possible. This is equivalent to calling
+ * `ref_transaction_prepare()` then `ref_transaction_finish()` (see
+ * below), which you can call yourself if you want finer control over
+ * reference updates.
  *
  * Returns 0 for success, or one of the below error codes for errors.
  */
@@ -544,6 +547,38 @@ int ref_transaction_verify(struct ref_transaction *transaction,
 #define TRANSACTION_GENERIC_ERROR -2
 int ref_transaction_commit(struct ref_transaction *transaction,
 			   struct strbuf *err);
+
+/*
+ * Perform the preparatory stages of commiting `transaction`. Acquire
+ * any needed locks, check preconditions, etc.; basically, do as much
+ * as possible to ensure that the transaction will be able to go
+ * through, stopping just short of making any irrevocable or
+ * user-visible changes. Anything that this function does should be
+ * able to be finished up by calling `ref_transaction_finish()` or
+ * rolled back by calling `ref_transaction_abort()`.
+ *
+ * On success, return 0 and leave the transaction in "prepared" state.
+ * On failure, abort the transaction and return one of the
+ * `TRANSACTION_*` constants.
+ *
+ * Callers who don't need such fine-grained control over commiting
+ * reference transactions should just call `ref_transaction_commit()`.
+ */
+int ref_transaction_prepare(struct ref_transaction *transaction,
+			    struct strbuf *err);
+
+/*
+ * Perform the final commit of `transaction`, which has already been
+ * prepared.
+ */
+int ref_transaction_finish(struct ref_transaction *transaction,
+			   struct strbuf *err);
+
+/*
+ * Abort `transaction`, which has already been prepared.
+ */
+int ref_transaction_abort(struct ref_transaction *transaction,
+			  struct strbuf *err);
 
 /*
  * Like ref_transaction_commit(), but optimized for creating
