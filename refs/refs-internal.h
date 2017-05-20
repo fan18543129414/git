@@ -170,6 +170,14 @@ int refs_read_raw_ref(struct ref_store *ref_store,
 		      struct strbuf *referent, unsigned int *type);
 
 /*
+ * Write an error to `err` and return a nonzero value iff the same
+ * refname appears multiple times in `refnames`. `refnames` must be
+ * sorted on entry to this function.
+ */
+int ref_update_reject_duplicates(struct string_list *refnames,
+				 struct strbuf *err);
+
+/*
  * Add a ref_update with the specified properties to transaction, and
  * return a pointer to the new object. This function does not verify
  * that refname is well-formed. new_sha1 and old_sha1 are only
@@ -185,17 +193,26 @@ struct ref_update *ref_transaction_add_update(
 
 /*
  * Transaction states.
- * OPEN:   The transaction is in a valid state and can accept new updates.
- *         An OPEN transaction can be committed.
- * CLOSED: A closed transaction is no longer active and no other operations
- *         than free can be used on it in this state.
- *         A transaction can either become closed by successfully committing
- *         an active transaction or if there is a failure while building
- *         the transaction thus rendering it failed/inactive.
+ *
+ * OPEN:   The transaction is in a valid state and new updates can be
+ *         added to it. An OPEN transaction can be prepared or
+ *         committed.
+ *
+ * PREPARED: ref_transaction_prepare(), which locks all of the
+ *         references involved in the update and checks that the
+ *         update has no errors, has been called successfully for the
+ *         transaction.
+ *
+ * CLOSED: The transaction is no longer active. No other operations
+ *         than free can be used on it in this state. A transaction
+ *         becomes closed if there is a failure while building the
+ *         transaction, if an active transaction is committed, or if a
+ *         prepared transaction is finished.
  */
 enum ref_transaction_state {
 	REF_TRANSACTION_OPEN   = 0,
-	REF_TRANSACTION_CLOSED = 1
+	REF_TRANSACTION_PREPARED = 1,
+	REF_TRANSACTION_CLOSED = 2
 };
 
 /*
@@ -497,6 +514,18 @@ typedef struct ref_store *ref_store_init_fn(const char *gitdir,
 
 typedef int ref_init_db_fn(struct ref_store *refs, struct strbuf *err);
 
+typedef int ref_transaction_prepare_fn(struct ref_store *refs,
+				       struct ref_transaction *transaction,
+				       struct strbuf *err);
+
+typedef int ref_transaction_finish_fn(struct ref_store *refs,
+				      struct ref_transaction *transaction,
+				      struct strbuf *err);
+
+typedef int ref_transaction_abort_fn(struct ref_store *refs,
+				     struct ref_transaction *transaction,
+				     struct strbuf *err);
+
 typedef int ref_transaction_commit_fn(struct ref_store *refs,
 				      struct ref_transaction *transaction,
 				      struct strbuf *err);
@@ -508,15 +537,15 @@ typedef int create_symref_fn(struct ref_store *ref_store,
 			     const char *ref_target,
 			     const char *refs_heads_master,
 			     const char *logmsg);
-typedef int delete_refs_fn(struct ref_store *ref_store,
+typedef int delete_refs_fn(struct ref_store *ref_store, const char *msg,
 			   struct string_list *refnames, unsigned int flags);
 typedef int rename_ref_fn(struct ref_store *ref_store,
 			  const char *oldref, const char *newref,
 			  const char *logmsg);
 
 /*
- * Iterate over the references in the specified ref_store that are
- * within find_containing_dir(prefix). If prefix is NULL or the empty
+ * Iterate over the references in the specified ref_store whose names
+ * start with the specified prefix. If prefix is NULL or the empty
  * string, iterate over all references in the submodule.
  */
 typedef struct ref_iterator *ref_iterator_begin_fn(
@@ -599,7 +628,10 @@ struct ref_storage_be {
 	const char *name;
 	ref_store_init_fn *init;
 	ref_init_db_fn *init_db;
-	ref_transaction_commit_fn *transaction_commit;
+
+	ref_transaction_prepare_fn *transaction_prepare;
+	ref_transaction_finish_fn *transaction_finish;
+	ref_transaction_abort_fn *transaction_abort;
 	ref_transaction_commit_fn *initial_transaction_commit;
 
 	pack_refs_fn *pack_refs;

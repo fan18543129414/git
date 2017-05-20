@@ -325,7 +325,8 @@ int reflog_exists(const char *refname);
  * verify that the current value of the reference is old_sha1 before
  * deleting it. If old_sha1 is NULL, delete the reference if it
  * exists, regardless of its old value. It is an error for old_sha1 to
- * be NULL_SHA1. flags is passed through to ref_transaction_delete().
+ * be NULL_SHA1. msg and flags are passed through to
+ * ref_transaction_delete().
  */
 int refs_delete_ref(struct ref_store *refs, const char *msg,
 		    const char *refname,
@@ -337,12 +338,13 @@ int delete_ref(const char *msg, const char *refname,
 /*
  * Delete the specified references. If there are any problems, emit
  * errors but attempt to keep going (i.e., the deletes are not done in
- * an all-or-nothing transaction). flags is passed through to
+ * an all-or-nothing transaction). msg and flags are passed through to
  * ref_transaction_delete().
  */
-int refs_delete_refs(struct ref_store *refs, struct string_list *refnames,
-		     unsigned int flags);
-int delete_refs(struct string_list *refnames, unsigned int flags);
+int refs_delete_refs(struct ref_store *refs, const char *msg,
+		     struct string_list *refnames, unsigned int flags);
+int delete_refs(const char *msg, struct string_list *refnames,
+		unsigned int flags);
 
 /** Delete a reflog */
 int refs_delete_reflog(struct ref_store *refs, const char *refname);
@@ -420,6 +422,19 @@ struct ref_transaction *ref_transaction_begin(struct strbuf *err);
  *         from ref_transaction_begin().
  *
  *     refname -- the name of the reference to be affected.
+ *
+ *     new_sha1 -- the SHA-1 that should be set to be the new value of
+ *         the reference. Some functions allow this parameter to be
+ *         NULL, meaning that the reference is not changed, or
+ *         null_sha1, meaning that the reference should be deleted. A
+ *         copy of this value is made in the transaction.
+ *
+ *     old_sha1 -- the SHA-1 value that the reference must have before
+ *         the update. Some functions allow this parameter to be NULL,
+ *         meaning that the old value of the reference is not checked,
+ *         or null_sha1, meaning that the reference must not exist
+ *         before the update. A copy of this value is made in the
+ *         transaction.
  *
  *     flags -- flags affecting the update, passed to
  *         update_ref_lock(). Can be REF_NODEREF, which means that
@@ -504,7 +519,10 @@ int ref_transaction_verify(struct ref_transaction *transaction,
 
 /*
  * Commit all of the changes that have been queued in transaction, as
- * atomically as possible.
+ * atomically as possible. This is equivalent to calling
+ * `ref_transaction_prepare()` then `ref_transaction_finish()` (see
+ * below), which you can call yourself if you want finer control over
+ * reference updates.
  *
  * Returns 0 for success, or one of the below error codes for errors.
  */
@@ -514,6 +532,38 @@ int ref_transaction_verify(struct ref_transaction *transaction,
 #define TRANSACTION_GENERIC_ERROR -2
 int ref_transaction_commit(struct ref_transaction *transaction,
 			   struct strbuf *err);
+
+/*
+ * Perform the preparatory stages of commiting `transaction`. Acquire
+ * any needed locks, check preconditions, etc.; basically, do as much
+ * as possible to ensure that the transaction will be able to go
+ * through, stopping just short of making any irrevocable or
+ * user-visible changes. Anything that this function does should be
+ * able to be finished up by calling `ref_transaction_finish()` or
+ * rolled back by calling `ref_transaction_abort()`.
+ *
+ * On success, return 0 and leave the transaction in "prepared" state.
+ * On failure, abort the transaction and return one of the
+ * `TRANSACTION_*` constants.
+ *
+ * Callers who don't need such fine-grained control over commiting
+ * reference transactions should just call `ref_transaction_commit()`.
+ */
+int ref_transaction_prepare(struct ref_transaction *transaction,
+			    struct strbuf *err);
+
+/*
+ * Perform the final commit of `transaction`, which has already been
+ * prepared.
+ */
+int ref_transaction_finish(struct ref_transaction *transaction,
+			   struct strbuf *err);
+
+/*
+ * Abort `transaction`, which has already been prepared.
+ */
+int ref_transaction_abort(struct ref_transaction *transaction,
+			  struct strbuf *err);
 
 /*
  * Like ref_transaction_commit(), but optimized for creating

@@ -836,7 +836,7 @@ struct ref_transaction *ref_transaction_begin(struct strbuf *err)
 
 void ref_transaction_free(struct ref_transaction *transaction)
 {
-	int i;
+	size_t i;
 
 	if (!transaction)
 		return;
@@ -1228,8 +1228,19 @@ struct ref_iterator *refs_ref_iterator_begin(
 {
 	struct ref_iterator *iter;
 
+	if (ref_paranoia < 0)
+		ref_paranoia = git_env_bool("GIT_REF_PARANOIA", 0);
+	if (ref_paranoia)
+		flags |= DO_FOR_EACH_INCLUDE_BROKEN;
+
 	iter = refs->be->iterator_begin(refs, prefix, flags);
-	iter = prefix_ref_iterator_begin(iter, prefix, trim);
+
+	/*
+	 * `iterator_begin()` already takes care of prefix, but we
+	 * might need to do some trimming:
+	 */
+	if (trim)
+		iter = prefix_ref_iterator_begin(iter, "", trim);
 
 	return iter;
 }
@@ -1652,8 +1663,31 @@ int create_symref(const char *ref_target, const char *refs_heads_master,
 				  refs_heads_master, logmsg);
 }
 
-int ref_transaction_commit(struct ref_transaction *transaction,
-			   struct strbuf *err)
+int ref_update_reject_duplicates(struct string_list *refnames,
+				 struct strbuf *err)
+{
+	size_t i, n = refnames->nr;
+
+	assert(err);
+
+	for (i = 1; i < n; i++) {
+		int cmp = strcmp(refnames->items[i - 1].string,
+				 refnames->items[i].string);
+
+		if (!cmp) {
+			strbuf_addf(err,
+				    "multiple updates for ref '%s' not allowed.",
+				    refnames->items[i].string);
+			return 1;
+		} else if (cmp > 0) {
+			die("BUG: ref_update_reject_duplicates() received unsorted list");
+		}
+	}
+	return 0;
+}
+
+int ref_transaction_prepare(struct ref_transaction *transaction,
+			    struct strbuf *err)
 {
 	struct ref_store *refs = transaction->ref_store;
 
@@ -1663,7 +1697,35 @@ int ref_transaction_commit(struct ref_transaction *transaction,
 		return -1;
 	}
 
-	return refs->be->transaction_commit(refs, transaction, err);
+	return refs->be->transaction_prepare(refs, transaction, err);
+}
+
+int ref_transaction_finish(struct ref_transaction *transaction,
+			   struct strbuf *err)
+{
+	struct ref_store *refs = transaction->ref_store;
+
+	return refs->be->transaction_finish(refs, transaction, err);
+}
+
+int ref_transaction_abort(struct ref_transaction *transaction,
+			  struct strbuf *err)
+{
+	struct ref_store *refs = transaction->ref_store;
+
+	return refs->be->transaction_abort(refs, transaction, err);
+}
+
+int ref_transaction_commit(struct ref_transaction *transaction,
+			   struct strbuf *err)
+{
+	int ret;
+
+	ret = ref_transaction_prepare(transaction, err);
+	if (ret)
+		return ret;
+
+	return ref_transaction_finish(transaction, err);
 }
 
 int refs_verify_refname_available(struct ref_store *refs,
@@ -1865,15 +1927,16 @@ int initial_ref_transaction_commit(struct ref_transaction *transaction,
 	return refs->be->initial_transaction_commit(refs, transaction, err);
 }
 
-int refs_delete_refs(struct ref_store *refs, struct string_list *refnames,
-		     unsigned int flags)
+int refs_delete_refs(struct ref_store *refs, const char *msg,
+		     struct string_list *refnames, unsigned int flags)
 {
-	return refs->be->delete_refs(refs, refnames, flags);
+	return refs->be->delete_refs(refs, msg, refnames, flags);
 }
 
-int delete_refs(struct string_list *refnames, unsigned int flags)
+int delete_refs(const char *msg, struct string_list *refnames,
+		unsigned int flags)
 {
-	return refs_delete_refs(get_main_ref_store(), refnames, flags);
+	return refs_delete_refs(get_main_ref_store(), msg, refnames, flags);
 }
 
 int refs_rename_ref(struct ref_store *refs, const char *oldref,

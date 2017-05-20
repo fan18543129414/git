@@ -98,8 +98,8 @@ embedded'"
 
 test_expect_success SANITY 'Test that "git rm -f" fails if its rm fails' '
 	chmod a-w . &&
-	test_must_fail git rm -f baz &&
-	chmod 775 .
+	test_when_finished "chmod 775 ." &&
+	test_must_fail git rm -f baz
 '
 
 test_expect_success \
